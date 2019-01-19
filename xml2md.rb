@@ -361,6 +361,39 @@ class Converter
     end
   end
 
+  class LiteralBlock < Element
+    def dispatch
+      writer.print("```")
+      classes = element.attribute("classes").value
+      if classes
+        writer.print(classes.split(" ").last)
+      end
+      writer.puts("")
+
+      element.each_child do |e|
+        case e
+        when REXML::Element
+          next if e.attribute("classes").value == "ln"
+          writer.print(e.text)
+        when REXML::Text
+          writer.print(e.to_s)
+        end
+      end
+      writer.puts("")
+      writer.puts("```")
+      writer.puts("")
+
+      Break()
+    end
+  end
+
+  class Strong < Element
+    def dispatch
+      writer.print(" **#{element.text}** ")
+      Break()
+    end
+  end
+
   class Generated < Element
     def dispatch
       writer.print("#{element.text.gsub(" ", "")}")
