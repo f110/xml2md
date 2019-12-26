@@ -1,31 +1,32 @@
 #!/usr/bin/env ruby
-
 require 'rexml/document'
+require 'optparse'
 
 class Converter
   Done = []
 
-  def initialize(doc, writer)
+  def initialize(doc, writer, opt = {})
     @root = doc
     @writer = writer
+    @opt = opt
   end
 
   def execute
     state = State.new
-    @root.each_element { |e| do_element(state, e, @writer) }
+    @root.each_element { |e| do_element(state, e, @writer, @opt) }
   end
 
-  def do_element(state, element, writer)
+  def do_element(state, element, writer, opt)
     rest_element = []
     begin
-      rest_element = to_element_converter(element.name).new(self, state, element, writer).dispatch
+      rest_element = to_element_converter(element.name).new(self, state, element, writer, opt).dispatch
     rescue NameError => e
       p e
       #puts "Unknown #{element.name}"
       #rest_element = element.elements
     end
 
-    rest_element.each { |e| do_element(state, e, writer) } if rest_element.size > 0
+    rest_element.each { |e| do_element(state, e, writer, opt) } if rest_element.size > 0
   end
 
   def to_element_converter(name)
@@ -67,13 +68,14 @@ class Converter
   end
 
   class Element
-    attr_reader :converter, :state, :element, :writer
+    attr_reader :converter, :state, :element, :writer, :opt
 
-    def initialize(converter, state, element, writer)
+    def initialize(converter, state, element, writer, opt)
       @converter = converter
       @state = state
       @element = element
       @writer = writer
+      @opt = opt
     end
 
     def dispatch
@@ -89,6 +91,15 @@ class Converter
     end
   end
 
+  class SystemMessage < Element
+    def dispatch
+      element.each_element do |e|
+        $stderr.puts(e.text)
+      end
+      Break()
+    end
+  end
+
   class Title < Element
     def dispatch
       case state.current
@@ -97,20 +108,25 @@ class Converter
         writer.puts("---")
         state.set(Converter::State::HEADER)
       when Converter::State::BODY
+        writer.puts("")
         writer.puts("# #{element.text}")
         writer.puts("")
       when Converter::State::SECTION
-        writer.puts("")
         writer.print("#" * state.depth)
         writer.print(" ")
         element.each_element do |e|
-          converter.do_element(state, e, writer)
+          converter.do_element(state, e, writer, opt)
         end
-        writer.print(" ")
-        anchor = element.text.split(" ").join("-").downcase
-        writer.print("<a name=\"#{anchor}\">")
-        writer.print(element.text)
-        writer.puts("</a>")
+        if opt[:anchor]
+          writer.print(" ")
+          anchor = element.text.split(" ").join("-").downcase
+          writer.print("<a name=\"#{anchor}\">")
+          writer.print(element.text)
+          writer.puts("</a>")
+        else
+          writer.print(element.text)
+        end
+        writer.puts("")
         writer.puts("")
       end
 
@@ -139,7 +155,7 @@ class Converter
       case state.current
       when Converter::State::BODY
         element.each_element do |e|
-          converter.do_element(state, e, writer)
+          converter.do_element(state, e, writer, opt)
         end
       end
 
@@ -150,11 +166,12 @@ class Converter
   class Paragraph < Element
     def dispatch
       case state.current
+      when Converter::State::BODY, Converter::State::SECTION
+        standard_print
+        line_break
+        line_break
       when Converter::State::BULLET_LIST_ITEM
         standard_puts
-      when Converter::State::SECTION
-        standard_puts
-        writer.puts("")
       when Converter::State::NOTE
         element.each_child do |e|
           case e
@@ -184,9 +201,13 @@ class Converter
         when REXML::Text
           print_method.call(e.to_s)
         when REXML::Element
-          converter.do_element(state, e, writer)
+          converter.do_element(state, e, writer, opt)
         end
       end
+    end
+
+    def line_break
+      writer.puts("")
     end
   end
 
@@ -196,7 +217,7 @@ class Converter
       state.right
 
       element.each_element do |e|
-        converter.do_element(state.clone, e, writer)
+        converter.do_element(state.clone, e, writer, opt)
       end
 
       state.left
@@ -210,7 +231,7 @@ class Converter
       state.set(Converter::State::NOTE)
 
       element.each_element do |e|
-        converter.do_element(state.clone, e, writer)
+        converter.do_element(state.clone, e, writer, opt)
       end
 
       Break()
@@ -234,7 +255,7 @@ class Converter
       end
 
       element.each_element do |e|
-        converter.do_element(list_state, e, writer)
+        converter.do_element(list_state, e, writer, opt)
       end
 
       state.set(prev) unless prev.nil?
@@ -256,7 +277,7 @@ class Converter
       writer.print("  " * state.depth)
       writer.print("* ")
       element.each_element do |e|
-        converter.do_element(state.clone, e, writer)
+        converter.do_element(state.clone, e, writer, opt)
       end
 
       state.set(prev) unless prev.nil?
@@ -268,9 +289,11 @@ class Converter
   class Reference < Element
     def dispatch
       case state.current
+      when Converter::State::BODY
+        link
       when Converter::State::BULLET_LIST_ITEM
         element.each_element do |e|
-          converter.do_element(state, e, writer)
+          converter.do_element(state, e, writer, opt)
         end
         link
         writer.puts("")
@@ -417,5 +440,11 @@ class Converter
   end
 end
 
+opts = {anchor: true}
+params = ARGV.getopts("", "qiita")
+if params["qiita"]
+  opts = {anchor: false}
+end
+
 doc = REXML::Document.new(open(ARGV.shift))
-Converter.new(doc, STDOUT).execute
+Converter.new(doc, STDOUT, opts).execute
