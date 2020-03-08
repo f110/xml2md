@@ -415,13 +415,25 @@ class Converter
   class Strong < Element
     def dispatch
       writer.print(" **#{element.text}** ")
+
+      Break()
+    end
+  end
+
+  class Emphasis < Element
+    def dispatch
+      writer.print(" *#{element.text}* ")
+
       Break()
     end
   end
 
   class Generated < Element
     def dispatch
-      writer.print("#{element.text.gsub(" ", "")}")
+      case state.current
+      when Converter::State::SECTION
+        writer.print("#{element.text.gsub(" ", "")}. ")
+      end
 
       Break()
     end
